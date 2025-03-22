@@ -64,15 +64,14 @@ defmodule Instructor.Adapters.DeepSeek do
   end
 
   defp do_chat_completion(mode, params, config) do
-    response =
-      Req.new()
-      |> Req.post(
-        url: url(config),
+    options =
+      Keyword.merge(http_options(config),
         headers: %{"Authorization" => "Bearer " <> api_key(config)},
         json: params
       )
 
-    with {:ok, %Req.Response{status: 200, body: body} = response} <- response,
+    with {:ok, %Req.Response{status: 200, body: body} = response} <-
+           Req.post(url(config), options),
          {:ok, body} <- parse_response_for_mode(mode, body) do
       {:ok, response, body}
     else
@@ -90,17 +89,17 @@ defmodule Instructor.Adapters.DeepSeek do
     Stream.resource(
       fn ->
         Task.async(fn ->
-          options = [
-            url: url(config),
-            headers: %{"Authorization" => "Bearer " <> api_key(config)},
-            json: params,
-            into: fn {:data, data}, {req, resp} ->
-              send(pid, data)
-              {:cont, {req, resp}}
-            end
-          ]
+          options =
+            Keyword.merge(http_options(config),
+              headers: %{"Authorization" => "Bearer " <> api_key(config)},
+              json: params,
+              into: fn {:data, data}, {req, resp} ->
+                send(pid, data)
+                {:cont, {req, resp}}
+              end
+            )
 
-          Req.post!(options)
+          Req.post!(url(config), options)
           send(pid, :done)
         end)
       end,
@@ -140,7 +139,7 @@ defmodule Instructor.Adapters.DeepSeek do
   defp url(config), do: api_url(config) <> "/chat/completions"
   defp api_url(config), do: Keyword.fetch!(config, :api_url)
   defp api_key(config), do: Keyword.fetch!(config, :api_key)
-
+  defp http_options(config), do: Keyword.fetch!(config, :http_options)
   defp config(nil), do: config(Application.get_env(:instructor, :deepseek, []))
 
   defp config(base_config) do
