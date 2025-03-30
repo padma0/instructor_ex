@@ -26,7 +26,7 @@ defmodule Instructor.Adapters.DeepSeek do
   alias Instructor.Adapters
   alias Instructor.SSEStreamParser
 
-  @supported_modes [:json_schema]
+  @supported_modes [:json_schema, :tools]
 
   @impl true
   def chat_completion(params, user_config \\ nil) do
@@ -127,11 +127,43 @@ defmodule Instructor.Adapters.DeepSeek do
     Jason.decode(text)
   end
 
+  defp parse_response_for_mode(:tools, %{
+         "choices" => [
+           %{"message" => %{"tool_calls" => [%{"function" => %{"arguments" => args}}]}}
+         ]
+       }),
+       do: Jason.decode(args)
+
+  defp parse_response_for_mode(mode, response) do
+    {:error, "Unsupported DeepSeek mode #{mode} with response #{inspect(response)}"}
+  end
+
   defp parse_stream_chunk_for_mode(:json_schema, %{
          "choices" => [%{"delta" => %{"content" => chunk}}]
        }) do
     chunk
   end
+
+  defp parse_stream_chunk_for_mode(:tools, %{
+         "choices" => [
+           %{"delta" => %{"tool_calls" => [%{"function" => %{"arguments" => chunk}}]}}
+         ]
+       }),
+       do: chunk
+
+  defp parse_stream_chunk_for_mode(:tools, %{
+         "choices" => [
+           %{"delta" => delta}
+         ]
+       }) do
+    case delta do
+      nil -> ""
+      %{} -> ""
+      %{"content" => chunk} -> chunk
+    end
+  end
+
+  defp parse_stream_chunk_for_mode(_, %{"choices" => [%{"finish_reason" => "stop"}]}), do: ""
 
   @impl true
   defdelegate reask_messages(raw_response, params, config), to: Adapters.OpenAI
