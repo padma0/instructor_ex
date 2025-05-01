@@ -40,14 +40,15 @@ defmodule Instructor.Adapters.XAI do
   @impl true
   defdelegate reask_messages(raw_response, params, config), to: Adapters.OpenAI
 
-  defp config(nil), do: config(Application.get_env(:instructor, :xai, []))
+  defp config(nil), do: config([])
 
   defp config(base_config) do
-    default_config = [
-      api_url: "https://api.x.ai",
-      api_key: System.get_env("XAI_API_KEY"),
-      http_options: [receive_timeout: 60_000]
-    ]
+    default_config =
+      Application.get_env(:instructor, :xai,
+        api_url: "https://api.x.ai",
+        api_key: System.get_env("XAI_API_KEY"),
+        http_options: [receive_timeout: 60_000]
+      )
 
     Keyword.merge(default_config, base_config)
   end

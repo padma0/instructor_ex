@@ -27,7 +27,7 @@ defmodule Instructor.Adapters.Gemini do
   alias Instructor.Adapters
   alias Instructor.JSONSchema
 
-  @supported_modes [:json_schema]
+  @supported_modes [:json_schema, :tools]
 
   @doc """
   Run a completion against Google's Gemini API
@@ -358,15 +358,16 @@ defmodule Instructor.Adapters.Gemini do
   defp api_key(config), do: Keyword.fetch!(config, :api_key)
   defp api_version(config), do: Keyword.fetch!(config, :api_version)
   defp http_options(config), do: Keyword.fetch!(config, :http_options)
-  defp config(nil), do: config(Application.get_env(:instructor, :gemini, []))
+  defp config(nil), do: config([])
 
   defp config(base_config) do
-    default_config = [
-      api_version: :v1beta,
-      api_url: "https://generativelanguage.googleapis.com/",
-      api_key: System.get_env("GOOGLE_API_KEY"),
-      http_options: [receive_timeout: 60_000]
-    ]
+    default_config =
+      Application.get_env(:instructor, :gemini,
+        api_version: :v1beta,
+        api_url: "https://generativelanguage.googleapis.com/",
+        api_key: System.get_env("GOOGLE_API_KEY"),
+        http_options: [receive_timeout: 60_000]
+      )
 
     Keyword.merge(default_config, base_config)
   end

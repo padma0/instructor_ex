@@ -154,14 +154,15 @@ defmodule Instructor.Adapters.Anthropic do
   defp api_key(config), do: Keyword.fetch!(config, :api_key)
   defp http_options(config), do: Keyword.fetch!(config, :http_options)
 
-  defp config(nil), do: config(Application.get_env(:instructor, :anthropic, []))
+  defp config(nil), do: config([])
 
   defp config(base_config) do
-    default_config = [
-      api_url: "https://api.anthropic.com/",
-      api_key: System.get_env("ANTHROPIC_API_KEY"),
-      http_options: [receive_timeout: 60_000]
-    ]
+    default_config =
+      Application.get_env(:instructor, :anthropic,
+        api_url: "https://api.anthropic.com/",
+        api_key: System.get_env("ANTHROPIC_API_KEY"),
+        http_options: [receive_timeout: 60_000]
+      )
 
     Keyword.merge(default_config, base_config)
   end
