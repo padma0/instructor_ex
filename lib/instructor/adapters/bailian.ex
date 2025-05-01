@@ -1,0 +1,188 @@
+defmodule Instructor.Adapters.BaiLian do
+  @moduledoc """
+  Aliyun BaiLian Adapter for Instructor.
+
+  ## Configuration
+
+  ```elixir
+  config :instructor, adapter: Instructor.Adapters.BaiLian, bailian: [
+    api_key: "your_api_key" # Will use BAILIAN_API_KEY environment variable if not provided
+  ]
+  ```
+
+  or at runtime:
+
+  ```elixir
+  Instructor.chat_completion(..., [
+    adapter: Instructor.Adapters.BaiLian,
+    api_key: "your_api_key" # Will use BAILIAN_API_KEY environment variable if not provided
+  ])
+  ```
+
+  To get an BaiLian API key, see [BaiLian](https://bailian.console.aliyun.com).
+  """
+
+  @behaviour Instructor.Adapter
+  alias Instructor.Adapters
+  alias Instructor.SSEStreamParser
+
+  @supported_modes [:json_schema, :tools]
+
+  @impl true
+  def chat_completion(params, user_config \\ nil) do
+    config = config(user_config)
+
+    # Peel off instructor only parameters
+    {_, params} = Keyword.pop(params, :response_model)
+    {_, params} = Keyword.pop(params, :validation_context)
+    {_, params} = Keyword.pop(params, :max_retries)
+    {mode, params} = Keyword.pop(params, :mode)
+    {response_format, params} = Keyword.pop(params, :response_format)
+    stream = Keyword.get(params, :stream, false)
+    params = Enum.into(params, %{})
+
+    if mode not in @supported_modes do
+      raise "Unsupported BaiLian mode #{mode}. Supported modes: #{inspect(@supported_modes)}"
+    end
+
+    params =
+      if mode == :json_schema do
+        Map.put(params, :response_format, %{type: "json_object"})
+      else
+        if response_format do
+          Map.put(params, :response_format, response_format)
+        else
+          params
+        end
+      end
+
+    if stream do
+      do_streaming_chat_completion(mode, params, config)
+    else
+      do_chat_completion(mode, params, config)
+    end
+  end
+
+  defp do_chat_completion(mode, params, config) do
+    options =
+      Keyword.merge(http_options(config),
+        headers: %{"Authorization" => "Bearer " <> api_key(config)},
+        json: params
+      )
+
+    with {:ok, %Req.Response{status: 200, body: body} = response} <-
+           Req.post(url(config), options),
+         {:ok, body} <- parse_response_for_mode(mode, body) do
+      {:ok, response, body}
+    else
+      {:ok, %Req.Response{status: status, body: body}} ->
+        {:error, "Unexpected HTTP response code: #{status}\n#{inspect(body)}"}
+
+      e ->
+        e
+    end
+  end
+
+  defp do_streaming_chat_completion(mode, params, config) do
+    pid = self()
+
+    Stream.resource(
+      fn ->
+        Task.async(fn ->
+          options =
+            Keyword.merge(http_options(config),
+              headers: %{"Authorization" => "Bearer " <> api_key(config)},
+              json: params,
+              into: fn {:data, data}, {req, resp} ->
+                send(pid, data)
+                {:cont, {req, resp}}
+              end
+            )
+
+          Req.post!(url(config), options)
+          send(pid, :done)
+        end)
+      end,
+      fn task ->
+        receive do
+          :done ->
+            {:halt, task}
+
+          data ->
+            {[data], task}
+        after
+          15_000 ->
+            {:halt, task}
+        end
+      end,
+      fn task -> Task.await(task) end
+    )
+    |> SSEStreamParser.parse()
+    |> Stream.map(fn chunk -> parse_stream_chunk_for_mode(mode, chunk) end)
+  end
+
+  defp parse_response_for_mode(:json_schema, %{
+         "choices" => [%{"message" => %{"content" => text}}]
+       }) do
+    Jason.decode(text)
+  end
+
+  defp parse_response_for_mode(:tools, %{
+         "choices" => [
+           %{"message" => %{"tool_calls" => [%{"function" => %{"arguments" => args}}]}}
+         ]
+       }),
+       do: Jason.decode(args)
+
+  defp parse_response_for_mode(mode, response) do
+    {:error, "Unsupported BaiLian mode #{mode} with response #{inspect(response)}"}
+  end
+
+  defp parse_stream_chunk_for_mode(:json_schema, %{
+         "choices" => [%{"delta" => %{"content" => chunk}}]
+       }) do
+    chunk
+  end
+
+  defp parse_stream_chunk_for_mode(:tools, %{
+         "choices" => [
+           %{"delta" => %{"tool_calls" => [%{"function" => %{"arguments" => chunk}}]}}
+         ]
+       }),
+       do: chunk
+
+  defp parse_stream_chunk_for_mode(:tools, %{
+         "choices" => [
+           %{"delta" => delta}
+         ]
+       }) do
+    case delta do
+      nil -> ""
+      %{} -> ""
+      %{"content" => chunk} -> chunk
+    end
+  end
+
+  defp parse_stream_chunk_for_mode(_, %{"choices" => [%{"finish_reason" => "stop"}]}), do: ""
+
+  @impl true
+  defdelegate reask_messages(raw_response, params, config), to: Adapters.OpenAI
+
+  defp url(config), do: api_url(config) <> "/chat/completions"
+  defp api_url(config), do: Keyword.fetch!(config, :api_url)
+  defp api_key(config), do: Keyword.fetch!(config, :api_key)
+  defp http_options(config), do: Keyword.fetch!(config, :http_options)
+
+  defp config(nil), do: config([])
+
+  defp config(base_config) do
+    default_config =
+      Application.get_env(:instructor, :bailian,
+        api_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key: System.get_env("BAILIAN_API_KEY"),
+        http_options: [receive_timeout: 60_000]
+      )
+
+    Keyword.merge(default_config, base_config)
+  end
+end
