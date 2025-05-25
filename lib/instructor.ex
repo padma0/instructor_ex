@@ -477,8 +477,14 @@ defmodule Instructor do
   end
 
   defp do_adapter_chat_completion(params, config) do
+    log = Keyword.get(params, :log, false)
+    if log, do: Logger.debug("LLM call: #{inspect(params)}, config: #{inspect(config)}")
+
     case adapter(config).chat_completion(params, config) do
       {:ok, response, content} ->
+        if log,
+          do: Logger.debug("LLM response: #{inspect(response)}, content: #{inspect(content)}")
+
         {:ok, response, content}
 
       {:error, reason} ->
